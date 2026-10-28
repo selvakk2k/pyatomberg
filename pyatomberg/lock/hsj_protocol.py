@@ -45,10 +45,13 @@ def slot_name(slot: int, slot_mappings: dict[int, str] | None = None) -> str:
 
 def format_ist_time(ts: int) -> str:
     """Format Unix timestamp to IST date string."""
+    from datetime import timedelta
+
     try:
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
         return (
             datetime.fromtimestamp(ts, timezone.utc)
-            .astimezone(ZoneInfo("Asia/Kolkata"))
+            .astimezone(ist_tz)
             .strftime("%Y-%m-%d %I:%M:%S %p")
         )
     except Exception:
