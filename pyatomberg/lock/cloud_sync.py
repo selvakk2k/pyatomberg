@@ -211,13 +211,42 @@ class AtombergCloudSync:
                         data: dict[str, Any] = await resp.json(content_type=None)
                         otp_val = None
                         if isinstance(data, dict):
-                            msg_data = data.get("message", {}).get("data", {})
-                            if isinstance(msg_data, dict):
-                                otp_val = msg_data.get("otp") or msg_data.get("password") or msg_data.get("pin")
-                            if not otp_val and isinstance(data.get("data"), dict):
-                                otp_val = data["data"].get("otp") or data["data"].get("password")
+                            # Priority 1: standard Atomberg data object: {"data": {"otp": ...}}
+                            data_obj = data.get("data")
+                            if isinstance(data_obj, dict):
+                                otp_val = (
+                                    data_obj.get("otp")
+                                    or data_obj.get("password")
+                                    or data_obj.get("pin")
+                                    or data_obj.get("dynamic_pin")
+                                    or data_obj.get("dynamic_password")
+                                )
+
+                            # Priority 2: nested message dictionary: {"message": {"data": {"otp": ...}}}
+                            msg_obj = data.get("message")
+                            if not otp_val and isinstance(msg_obj, dict):
+                                msg_data = msg_obj.get("data")
+                                if isinstance(msg_data, dict):
+                                    otp_val = (
+                                        msg_data.get("otp")
+                                        or msg_data.get("password")
+                                        or msg_data.get("pin")
+                                    )
+                                else:
+                                    otp_val = (
+                                        msg_obj.get("otp")
+                                        or msg_obj.get("password")
+                                        or msg_obj.get("pin")
+                                    )
+
+                            # Priority 3: root-level keys
                             if not otp_val:
-                                otp_val = data.get("otp") or data.get("password") or data.get("pin")
+                                otp_val = (
+                                    data.get("otp")
+                                    or data.get("password")
+                                    or data.get("pin")
+                                    or data.get("dynamic_pin")
+                                )
 
                         if otp_val:
                             _LOGGER.info("Retrieved active cloud OTP for lock %s: %s", clean_id, otp_val)
