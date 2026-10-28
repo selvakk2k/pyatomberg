@@ -279,12 +279,17 @@ def parse_log_record(rec: bytes, slot_mappings: dict[int, str] | None = None) ->
         detail = "Auto-Lock / Latch Engaged"
         slot = 0
 
+    ist_time_str = format_ist_time(ts)
     return {
-        "datetime": format_ist_time(ts),
+        "datetime": ist_time_str,
+        "timestamp": ist_time_str,
+        "raw_timestamp": ts,
         "event": event,
         "detail": detail,
         "battery": battery,
         "credential_type": cred_type_name,
         "slot": slot,
+        "slot_id": slot,
+        "source": "ble",
         **({"pin": pin_str} if pin_str else {}),
     }
