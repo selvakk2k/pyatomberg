@@ -205,3 +205,66 @@ async def test_cloud_sync_get_dynamic_otp() -> None:
     assert mock_session.post.called
 
 
+@pytest.mark.asyncio
+async def test_fetch_cloud_history() -> None:
+    """Test fetching and parsing lock history from Cloud Firestore."""
+    from pyatomberg.lock.cloud_sync import AtombergCloudSync
+
+    mock_auth_resp = MagicMock()
+    mock_auth_resp.status = 200
+    mock_auth_resp.json = AsyncMock(return_value={"idToken": "fake_fb_token"})
+
+    mock_fs_resp = MagicMock()
+    mock_fs_resp.status = 200
+    mock_fs_resp.json = AsyncMock(return_value={
+        "fields": {
+            "locks": {
+                "mapValue": {
+                    "fields": {
+                        "history": {
+                            "arrayValue": {
+                                "values": [
+                                    {
+                                        "mapValue": {
+                                            "fields": {
+                                                "recordTime": {"stringValue": "1792234393"},
+                                                "recordType": {"stringValue": "4"},
+                                                "keyType": {"stringValue": "1"},
+                                                "lockKeyId": {"integerValue": "14"},
+                                                "type": {"stringValue": "unlock"},
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
+
+    mock_session = MagicMock()
+    mock_session.closed = False
+    mock_session.post.return_value.__aenter__ = AsyncMock(return_value=mock_auth_resp)
+    mock_session.post.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_fs_resp)
+    mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    sync = AtombergCloudSync(access_token="test_token", session=mock_session)
+    events = await sync.fetch_cloud_history(
+        device_id="63:c9:c4:83:b9:4a",
+        slot_mappings={14: "Left Thumb"},
+    )
+
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["event"] == "Unlocked Successfully"
+    assert ev["credential_type"] == "Fingerprint"
+    assert "Left Thumb" in ev["detail"]
+    assert ev["slot"] == 14
+    assert ev["raw_timestamp"] == 1792234393
+    assert ev["source"] == "cloud"
+
+
+

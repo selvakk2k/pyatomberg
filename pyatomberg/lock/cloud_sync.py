@@ -235,3 +235,109 @@ class AtombergCloudSync:
 
         raise AtombergConnectionError(f"Failed to fetch dynamic OTP from cloud: {last_error}")
 
+    async def fetch_cloud_history(
+        self,
+        device_id: str,
+        slot_mappings: dict[int, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch lock history events from Firestore cloud document."""
+        session = self._session
+        if session is None or session.closed:
+            session = aiohttp.ClientSession()
+            self._session = session
+
+        clean_id = device_id.replace(":", "").replace("-", "").lower()
+
+        # Step 1: Obtain anonymous Firebase token using mobile client key
+        api_key = "AIzaSyBowISrLGjKvmHN95NEvylMjgdR0ExPlUo"
+        auth_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
+        fb_token = None
+        try:
+            async with session.post(
+                auth_url,
+                json={"returnSecureToken": True},
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as auth_resp:
+                if auth_resp.status == 200:
+                    auth_data = await auth_resp.json(content_type=None)
+                    fb_token = auth_data.get("idToken")
+        except Exception as err:
+            _LOGGER.debug("Could not get Firebase token: %s", err)
+
+        if not fb_token:
+            fb_token = self._token
+
+        # Step 2: Fetch Firestore doc for this lock
+        fs_url = f"https://firestore.googleapis.com/v1/projects/firestore-test-65c75/databases/(default)/documents/lock_history/{clean_id}"
+        headers = {"Authorization": f"Bearer {fb_token}", "Accept": "application/json"}
+
+        try:
+            async with session.get(
+                fs_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.debug("Cloud history returned HTTP %s for lock %s", resp.status, clean_id)
+                    return []
+                doc = await resp.json(content_type=None)
+        except Exception as ex:
+            _LOGGER.debug("Failed to query cloud history for lock %s: %s", clean_id, ex)
+            return []
+
+        # Step 3: Parse records array
+        from pyatomberg.lock.hsj_protocol import format_ist_time, slot_name
+
+        events: list[dict[str, Any]] = []
+        locks_field = doc.get("fields", {}).get("locks", {}).get("mapValue", {}).get("fields", {})
+        history_list = locks_field.get("history", {}).get("arrayValue", {}).get("values", [])
+
+        for val in history_list:
+            item = val.get("mapValue", {}).get("fields", {})
+            if not item:
+                continue
+
+            record_time_str = item.get("recordTime", {}).get("stringValue", "0")
+            ts = int(record_time_str) if record_time_str.isdigit() else 0
+            rec_type = item.get("recordType", {}).get("stringValue", "0")
+            key_type_str = item.get("keyType", {}).get("stringValue", "0")
+            key_type = int(key_type_str) if key_type_str.isdigit() else 0
+            slot_id_val = item.get("lockKeyId", {})
+            slot_id = int(slot_id_val.get("integerValue") or slot_id_val.get("stringValue") or 0)
+            event_type = item.get("type", {}).get("stringValue", "")
+
+            event_name = "Unlocked Successfully" if (rec_type == "4" or event_type == "unlock") else "Hardware Event"
+            if event_type == "addKey" or rec_type == "8":
+                event_name = "Credential Enrolled"
+
+            cred_type_name = "Physical Credential"
+            detail = ""
+            if key_type == 1:
+                cred_type_name = "Fingerprint"
+                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
+            elif key_type == 2:
+                cred_type_name = "PIN Code"
+                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
+            elif key_type == 4:
+                cred_type_name = "NFC Card"
+                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
+            elif key_type == 128 or slot_id == 0:
+                cred_type_name = "Atomberg App"
+                detail = "Atomberg Mobile App (BLE)"
+            else:
+                cred_type_name = f"Credential Type {key_type}"
+                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
+
+            events.append({
+                "datetime": format_ist_time(ts),
+                "event": event_name,
+                "detail": detail,
+                "credential_type": cred_type_name,
+                "slot": slot_id,
+                "raw_timestamp": ts,
+                "source": "cloud",
+            })
+
+        events.sort(key=lambda x: x.get("raw_timestamp", 0), reverse=True)
+        return events
+
+
