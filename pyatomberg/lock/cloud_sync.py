@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
 import logging
 import time
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import aiohttp
 
@@ -15,6 +18,19 @@ from pyatomberg.lock.pairing import PairingResult
 _LOGGER = logging.getLogger(__name__)
 
 
+def decode_jwt_payload(token: str) -> dict[str, Any]:
+    """Decode JWT payload without verifying signature to read claims like exp."""
+    try:
+        parts = token.strip().split(".")
+        if len(parts) >= 2:
+            payload_b64 = parts[1]
+            padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+            return json.loads(base64.urlsafe_b64decode(padded))
+    except Exception:
+        pass
+    return {}
+
+
 class AtombergCloudSync:
     """Fetches already-paired lock encryption keys and metadata from the Atomberg mobile backend."""
 
@@ -22,26 +38,94 @@ class AtombergCloudSync:
         self,
         access_token: str | None = None,
         id_token: str | None = None,
+        refresh_token: str | None = None,
+        oauth_handler: Any | None = None,
         session: aiohttp.ClientSession | None = None,
         base_url: str = SERVER_API_BASE,
+        on_token_refreshed: Callable[[str, str | None], Awaitable[None]] | None = None,
     ) -> None:
-        """Initialize cloud sync client with Cognito access token or ID token."""
+        """Initialize cloud sync client with Cognito tokens or OAuth handler."""
         token = access_token or id_token
-        if not token:
-            raise AtombergAuthError("Cognito access token or ID token is required for cloud sync")
+        if not token and oauth_handler and hasattr(oauth_handler, "id_token"):
+            token = oauth_handler.id_token or oauth_handler.access_token
 
-        self._token = token
+        if not token and not refresh_token and not oauth_handler:
+            raise AtombergAuthError("Cognito token, refresh token, or oauth_handler is required for cloud sync")
+
+        self._token = token or ""
+        self._refresh_token = refresh_token
+        self._oauth_handler = oauth_handler
         self._session = session
         self._owns_session = session is None
         self._base_url = base_url.rstrip("/")
+        self._on_token_refreshed = on_token_refreshed
 
     @property
     def token(self) -> str:
         """Return the active Bearer token."""
         return self._token
 
+    @property
+    def refresh_token(self) -> str | None:
+        """Return the active refresh token."""
+        return self._refresh_token
+
+    def is_token_expired(self, skew_seconds: int = 60) -> bool:
+        """Check if current token is expired or about to expire within skew_seconds."""
+        if not self._token:
+            return True
+        payload = decode_jwt_payload(self._token)
+        exp = payload.get("exp")
+        if exp is not None:
+            return time.time() >= (float(exp) - skew_seconds)
+        return False
+
+    async def async_ensure_valid_token(self) -> str:
+        """Ensure active token is valid, refreshing if expired or expiring soon."""
+        if self.is_token_expired():
+            await self.async_refresh_token()
+        return self._token
+
+    async def async_refresh_token(self) -> str:
+        """Refresh Cognito tokens using OAuth handler or stored refresh token."""
+        if self._oauth_handler is None and self._refresh_token:
+            from pyatomberg.auth.cognito import CognitoOAuthHandler
+
+            self._oauth_handler = CognitoOAuthHandler(
+                refresh_token=self._refresh_token,
+                session=self._session,
+            )
+
+        if self._oauth_handler is None:
+            _LOGGER.debug("No OAuth handler or refresh token available to refresh token")
+            return self._token
+
+        try:
+            tokens = await self._oauth_handler.refresh_tokens()
+            new_token = tokens.get("id_token") or tokens.get("access_token")
+            if new_token:
+                self._token = new_token
+                new_refresh = tokens.get("refresh_token") or self._refresh_token
+                if new_refresh:
+                    self._refresh_token = new_refresh
+                _LOGGER.info("Successfully refreshed Atomberg Cognito token")
+                if self._on_token_refreshed:
+                    try:
+                        res = self._on_token_refreshed(new_token, self._refresh_token)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as cb_err:
+                        _LOGGER.warning("Token refresh callback failed: %s", cb_err)
+                return self._token
+        except Exception as err:
+            _LOGGER.error("Failed to refresh Cognito token: %s", err)
+            raise AtombergAuthError(f"Cognito token refresh failed: {err}") from err
+
+        return self._token
+
     async def fetch_account_locks(self) -> list[PairingResult]:
         """Fetch all smart locks registered to this Atomberg account with encryption parameters."""
+        await self.async_ensure_valid_token()
         url = f"{self._base_url}/app_open"
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -165,104 +249,7 @@ class AtombergCloudSync:
             if self._owns_session and self._session and not self._session.closed:
                 await self._session.close()
 
-    async def get_dynamic_otp(
-        self,
-        device_id: str,
-        start_time: int | None = None,
-        end_time: int | None = None,
-    ) -> dict[str, Any]:
-        """Fetch an active 6-digit dynamic OTP for an SL1/Azhero smart lock from the cloud."""
-        headers = {
-            "Authorization": f"Bearer {self._token}",
-            "User-Agent": "Atomberg/7.7.2",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
 
-        session = self._session
-        if session is None or session.closed:
-            session = aiohttp.ClientSession()
-            self._session = session
-
-        now_ts = int(time.time())
-        s_time = start_time if start_time is not None else now_ts
-        e_time = end_time if end_time is not None else (now_ts + 1800)
-
-        clean_id = device_id.replace(":", "").replace("-", "").lower()
-        payload = {
-            "device_id": clean_id,
-            "start_time": s_time,
-            "end_time": e_time,
-        }
-
-        urls = [
-            f"{self._base_url}/lrp/get_otp",
-            f"{self._base_url}/get_lock_dynamic_pin",
-            f"{self._base_url}/lrp/get_dynamic_password",
-        ]
-
-        last_error: str | None = None
-        for url in urls:
-            try:
-                async with session.post(
-                    url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        data: dict[str, Any] = await resp.json(content_type=None)
-                        otp_val = None
-                        if isinstance(data, dict):
-                            # Priority 1: standard Atomberg data object: {"data": {"otp": ...}}
-                            data_obj = data.get("data")
-                            if isinstance(data_obj, dict):
-                                otp_val = (
-                                    data_obj.get("otp")
-                                    or data_obj.get("password")
-                                    or data_obj.get("pin")
-                                    or data_obj.get("dynamic_pin")
-                                    or data_obj.get("dynamic_password")
-                                )
-
-                            # Priority 2: nested message dictionary: {"message": {"data": {"otp": ...}}}
-                            msg_obj = data.get("message")
-                            if not otp_val and isinstance(msg_obj, dict):
-                                msg_data = msg_obj.get("data")
-                                if isinstance(msg_data, dict):
-                                    otp_val = (
-                                        msg_data.get("otp")
-                                        or msg_data.get("password")
-                                        or msg_data.get("pin")
-                                    )
-                                else:
-                                    otp_val = (
-                                        msg_obj.get("otp")
-                                        or msg_obj.get("password")
-                                        or msg_obj.get("pin")
-                                    )
-
-                            # Priority 3: root-level keys
-                            if not otp_val:
-                                otp_val = (
-                                    data.get("otp")
-                                    or data.get("password")
-                                    or data.get("pin")
-                                    or data.get("dynamic_pin")
-                                )
-
-                        if otp_val:
-                            _LOGGER.info("Retrieved active cloud OTP for lock %s: %s", clean_id, otp_val)
-                            return {
-                                "otp": str(otp_val),
-                                "start_time": s_time,
-                                "end_time": e_time,
-                                "raw_response": data,
-                            }
-                    else:
-                        last_error = f"HTTP {resp.status}"
-            except Exception as ex:
-                last_error = str(ex)
-                continue
-
-        raise AtombergConnectionError(f"Failed to fetch dynamic OTP from cloud: {last_error}")
 
     async def fetch_cloud_history(
         self,

@@ -47,3 +47,6 @@ Thumbs.db
 *.local.json
 live_tokens.json
 *oauth*.json
+
+# Experimental & Archived research
+archive/

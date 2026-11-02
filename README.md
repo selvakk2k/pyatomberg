@@ -24,9 +24,8 @@ An asynchronous Python client library for authentication, discovery, and control
 - [Quick Start by Device Category](#quick-start-by-device-category)
   - [1. Universal Multi-Device Discovery](#1-universal-multi-device-discovery)
   - [2. Smart Door Locks: Key Extraction & Protocol Primitives](#2-smart-door-locks-key-extraction--protocol-primitives)
-  - [3. Smart Door Locks: Offline Dynamic OTP Generation](#3-smart-door-locks-offline-dynamic-otp-generation)
-  - [4. Smart Ceiling Fans: Local UDP Broadcast & Cloud Control](#4-smart-ceiling-fans-local-udp-broadcast--cloud-control)
-  - [5. Connected Appliances: Water Purifiers](#5-connected-appliances-water-purifiers)
+  - [3. Smart Ceiling Fans: Local UDP Broadcast & Cloud Control](#3-smart-ceiling-fans-local-udp-broadcast--cloud-control)
+  - [4. Connected Appliances: Water Purifiers](#4-connected-appliances-water-purifiers)
 - [Supported Capabilities vs. Known Limitations](#supported-capabilities-vs-known-limitations)
 - [Testing & Quality Assurance](#testing--quality-assurance)
 - [Credits & License](#credits--license)
@@ -41,12 +40,12 @@ Atomberg provides an official Developer Portal and API (`https://api.developer.a
 
 1. **Mandatory Ceiling Fan Dependency**: In the official Atomberg Android/iOS application (`com.atomberg.app`), the Developer Options menu (`DeveloperOptionsScreen`) is strictly hidden unless the user has at least one smart ceiling fan registered to their account. Users who own only smart locks or smart appliances cannot activate developer mode or generate developer tokens.
 2. **Missing Local BLE Credentials**: The official cloud API does not provide Bluetooth Low Energy (BLE) authentication keys or master credentials for smart door locks.
-3. **No Offline Support**: The developer API requires active internet connectivity for all actions, including guest keypad PIN generation, introducing network latency and cloud dependency.
+3. **Appliance Ecosystem Unification**: `pyatomberg` bridges the gap across the Atomberg device ecosystem, enabling third-party Home Assistant integrations and custom automation engines to interface directly with fans, locks, and appliances.
 
 To overcome these barriers, `atomberg-py` reverse-engineers the official Atomberg application protocol and combines two distinct control tiers:
 
 * **Universal Cloud Layer**: Uses native AWS Cognito OAuth2 with PKCE (supporting Email, Google, Apple, and Facebook logins) to discover all registered appliances across any user account.
-* **100% Offline Local Layer**: Provides protocol frame serialization (`HSJProtocol`), AES-128 cryptographic primitives, offline algorithmic OTP PIN calculations that require zero network requests, and local network UDP broadcast listeners for smart ceiling fans.
+* **100% Offline Local Layer**: Provides protocol frame serialization (`HSJProtocol`), AES-128 cryptographic primitives, live notification parsing, and local network UDP broadcast listeners for smart ceiling fans.
 
 ---
 
@@ -56,8 +55,7 @@ To overcome these barriers, `atomberg-py` reverse-engineers the official Atomber
 | :--- | :--- | :--- | :--- | :--- |
 | **Authentication** | AWS Cognito OAuth2 | Email, Google, Apple, Facebook | Cloud REST + OAuth2 / PKCE | `✅ Hardware Verified` |
 | **Authentication** | Official Developer API | Refresh Token Exchange (`v2`) | Cloud REST (`api.developer.atomberg-iot.com`) | `✅ Hardware Verified` |
-| **Smart Door Locks** | SL1, SL1 Pro (`smart_lock_black`) | AES-128 Encryption, Packet Codecs, BTSnoop Key Extraction | Offline Protocol / Cloud Sync | `✅ Hardware Verified` |
-| **Smart Door Locks** | Dynamic Keypad PINs | Remote Single-Use OTP, Timed Guest OTPs with IST Half-Hour Quantization | 100% Offline HMAC-SHA256 Derivation | `✅ Hardware Verified` |
+| **Smart Door Locks** | SL1, SL1 Pro (`smart_lock_black`) | AES-128 Encryption, Packet Codecs, BTSnoop Key Extraction, Live Events | Offline Protocol / Cloud Sync | `✅ Hardware Verified` |
 | **Smart Door Locks** | Cypheo Elite (`G1`) | Clock-Derived Rolling PINs | Cloud API / Algorithmic Derivation | `⚠️ API Modeled` |
 | **Smart Ceiling Fans** | Renesa, Studio, Aris, Wave | State Tracking (Speed, Power, Timer, Breeze, Sleep) | Local UDP Broadcast (Port 5625) | `✅ Hardware Verified` |
 | **Smart Ceiling Fans** | All Wi-Fi Series | Speed Selection (1–6), Mode Switching, Power Toggle | Cloud REST via Developer API / Cognito | `✅ Hardware Verified` |
@@ -178,40 +176,7 @@ print(f"Serialized Frame (length {len(packet)}): {packet.hex()}")
 
 ---
 
-### 3. Smart Door Locks: Offline Dynamic OTP Generation
-
-Atomberg door locks feature an internal algorithmic keypad PIN engine. You can calculate valid 8-digit OTP codes entirely offline without making any network requests or cloud calls:
-
-```python
-import datetime
-from pyatomberg.lock.dynamic_pin import calculate_offline_otp, quantize_expiration_time
-
-# 1. Single-Use Remote OTP (valid until next :00 or :30 half-hour boundary in IST)
-remote_expiry = quantize_expiration_time(duration_hours=0.5)
-remote_otp = calculate_offline_otp(
-    auth_code="482B2C89",
-    aes_key="AgABfsR33DdoSdMe",
-    target_dt=remote_expiry,
-    lock_mac="63C9C483B94A",
-    slot_index=0,
-)
-print(f"Remote OTP: {remote_otp} (Valid until: {remote_expiry.isoformat()})")
-
-# 2. Timed Guest OTP (valid for 4 hours, quantized to nearest boundary)
-guest_expiry = quantize_expiration_time(duration_hours=4.0)
-guest_otp = calculate_offline_otp(
-    auth_code="482B2C89",
-    aes_key="AgABfsR33DdoSdMe",
-    target_dt=guest_expiry,
-    lock_mac="63C9C483B94A",
-    slot_index=1,
-)
-print(f"4-Hour Guest OTP: {guest_otp} (Valid until: {guest_expiry.isoformat()})")
-```
-
----
-
-### 4. Smart Ceiling Fans: Local UDP Broadcast & Cloud Control
+### 3. Smart Ceiling Fans: Local UDP Broadcast & Cloud Control
 
 #### Real-Time Local UDP Broadcast Listener
 Atomberg Wi-Fi ceiling fans broadcast unencrypted JSON/HAProxy status packets across the local subnet on UDP port 5625:
@@ -251,7 +216,7 @@ asyncio.run(main())
 
 ---
 
-### 5. Connected Appliances: Water Purifiers
+### 4. Connected Appliances: Water Purifiers
 
 The library provides abstract state models for Atomberg's connected appliance ecosystem:
 
