@@ -269,6 +269,7 @@ pytest tests/ -v
 ### Author & Contributors
 * **Architecture & Lead Engineering**: [@selvakk2k](https://github.com/selvakk2k)
 * **Code Implementation & Engineering**: **Antigravity** (Google DeepMind)
+* **Automated Code Review & Auditing**: **CodeRabbit** ([@coderabbitai](https://github.com/coderabbitai))
 * **Code Review & Pre-Release Auditing**: **Claude** (Anthropic)
 
 Licensed under the **GNU General Public License v3.0 (GPL-3.0)**. See [LICENSE](LICENSE) for details.
