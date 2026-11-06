@@ -154,7 +154,7 @@ def parse_live_event(dec: bytes, slot_mappings: dict[int, str] | None = None) ->
             cred_type_name = "Wrong Keypad PIN"
             pin_len = dec[26] if len(dec) > 26 else 0
             if 0 < pin_len <= 16 and len(dec) >= (27 + pin_len):
-                pin_str = dec[27 : 27 + pin_len].decode("ascii", errors="ignore")
+                pin_str = "****"
         elif fail_cred == 0x04:
             cred_type_name = "Unregistered NFC Card"
         else:
@@ -228,9 +228,8 @@ def parse_log_record(rec: bytes, slot_mappings: dict[int, str] | None = None) ->
             cred_type_name = "Wrong Keypad PIN"
             pin_len = rec[26] if len(rec) > 26 else 0
             if pin_len > 0 and len(rec) > 27:
-                available_len = min(pin_len, len(rec) - 27)
-                pin_str = rec[27 : 27 + available_len].decode("latin1", errors="ignore")
-            detail = f"Wrong Keypad PIN: {pin_str}" if pin_str else "Wrong Keypad PIN"
+                pin_str = "****"
+            detail = "Wrong Keypad PIN"
         elif cred_type == 0x04:
             cred_type_name = "Unregistered NFC Card"
             detail = "Unregistered NFC Card"

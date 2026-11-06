@@ -97,7 +97,7 @@ def test_parse_live_event_tamper():
     assert event is not None
     assert event.is_tamper is True
     assert event.credential_type == "Wrong Keypad PIN"
-    assert event.pin_code == "123456"
+    assert event.pin_code == "****"
 
 
 def test_parse_live_event_auto_lock():
@@ -147,4 +147,4 @@ def test_parse_log_record_tamper_pin():
     parsed = parse_log_record(bytes(rec))
     assert parsed["event"] == "False / Denied Attempt"
     assert parsed["credential_type"] == "Wrong Keypad PIN"
-    assert "98765" in parsed["detail"]
+    assert parsed["detail"] == "Wrong Keypad PIN"
