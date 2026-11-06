@@ -5,14 +5,10 @@ on:
     types: [published]
 
 jobs:
-  pypi-publish:
-    name: Upload release to PyPI
+  test-and-build:
+    name: Test and build distributions
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/pyatomberg
     permissions:
-      id-token: write
       contents: read
 
     steps:
@@ -23,14 +19,40 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install build tool
+      - name: Install dependencies and test
         run: |
           python -m pip install --upgrade pip
-          pip install build
+          pip install build pytest pytest-asyncio
+          pip install -e .
+          pytest
 
       - name: Build distribution packages
         run: |
           python -m build
 
+      - name: Store distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+          retention-days: 30
+
+  pypi-publish:
+    name: Upload release to PyPI
+    needs: [test-and-build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pyatomberg
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
       - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@v1.14.3

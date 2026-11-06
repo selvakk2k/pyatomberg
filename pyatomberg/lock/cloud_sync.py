@@ -11,11 +11,21 @@ from typing import Any, Awaitable, Callable
 
 import aiohttp
 
-from pyatomberg.const import SERVER_API_BASE
+from pyatomberg.const import (
+    FIREBASE_API_KEY,
+    FIREBASE_PROJECT_ID,
+    SERVER_API_BASE,
+)
 from pyatomberg.exceptions import AtombergAuthError, AtombergConnectionError
 from pyatomberg.lock.pairing import PairingResult
 
 _LOGGER = logging.getLogger(__name__)
+
+_CREDENTIAL_TYPE_NAMES: dict[int, str] = {
+    1: "Fingerprint",
+    2: "PIN Code",
+    4: "NFC Card",
+}
 
 
 def decode_jwt_payload(token: str) -> dict[str, Any]:
@@ -42,6 +52,8 @@ class AtombergCloudSync:
         oauth_handler: Any | None = None,
         session: aiohttp.ClientSession | None = None,
         base_url: str = SERVER_API_BASE,
+        firebase_api_key: str = FIREBASE_API_KEY,
+        firebase_project_id: str = FIREBASE_PROJECT_ID,
         on_token_refreshed: Callable[[str, str | None], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize cloud sync client with Cognito tokens or OAuth handler."""
@@ -58,6 +70,10 @@ class AtombergCloudSync:
         self._session = session
         self._owns_session = session is None
         self._base_url = base_url.rstrip("/")
+        self._firebase_api_key = firebase_api_key
+        self._firebase_project_id = firebase_project_id
+        self._fb_token: str | None = None
+        self._fb_token_expires_at: float = 0.0
         self._on_token_refreshed = on_token_refreshed
 
     @property
@@ -140,6 +156,8 @@ class AtombergCloudSync:
 
         try:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status in (401, 403):
+                    raise AtombergAuthError(f"Cloud server returned HTTP {resp.status} (authentication failed)")
                 if resp.status != 200:
                     raise AtombergConnectionError(f"Cloud server returned HTTP {resp.status}")
 
@@ -149,11 +167,11 @@ class AtombergCloudSync:
                 devices: list[dict[str, Any]] = []
 
                 # Primary production schema: message.user_details.families[].devices[]
-                user_details = data.get("message", {}).get("user_details", {})
-                families = user_details.get("families", [])
+                user_details = (data.get("message") or {}).get("user_details") or {}
+                families = user_details.get("families") or []
                 for fam in families:
                     if isinstance(fam, dict):
-                        for dev in fam.get("devices", []):
+                        for dev in (fam.get("devices") or []):
                             if isinstance(dev, dict):
                                 devices.append(dev)
 
@@ -161,8 +179,8 @@ class AtombergCloudSync:
                 if not devices:
                     devices = (
                         data.get("devices")
-                        or data.get("data", {}).get("devices")
-                        or data.get("data", {}).get("locks")
+                        or (data.get("data") or {}).get("devices")
+                        or (data.get("data") or {}).get("locks")
                         or data.get("locks")
                         or []
                     )
@@ -172,78 +190,82 @@ class AtombergCloudSync:
                     if not isinstance(item, dict):
                         continue
 
-                    meta = item.get("metadata", {})
-                    friendly_name = item.get("friendly_name") or item.get("name") or "Atomberg Smart Lock"
-                    model = item.get("model") or item.get("series") or "smart_lock"
+                    try:
+                        meta = item.get("metadata") or {}
+                        friendly_name = item.get("friendly_name") or item.get("name") or "Atomberg Smart Lock"
+                        model = item.get("model") or item.get("series") or "smart_lock"
 
-                    # 1. Primary Atomberg lock metadata schema (aes + adminAuthCode/generalAuthCode)
-                    if "aes" in meta and ("adminAuthCode" in meta or "generalAuthCode" in meta):
-                        mac_raw = meta.get("lockMac") or item.get("device_id") or ""
-                        mac_clean = mac_raw.replace(":", "").replace("-", "").upper()
-                        if len(mac_clean) == 12:
-                            mac = ":".join(mac_clean[i : i + 2] for i in range(0, 12, 2))
+                        # 1. Primary Atomberg lock metadata schema (aes + adminAuthCode/generalAuthCode)
+                        if "aes" in meta and ("adminAuthCode" in meta or "generalAuthCode" in meta):
+                            mac_raw = meta.get("lockMac") or item.get("device_id") or ""
+                            mac_clean = str(mac_raw).replace(":", "").replace("-", "").upper()
+                            if len(mac_clean) == 12:
+                                mac = ":".join(mac_clean[i : i + 2] for i in range(0, 12, 2))
+                            else:
+                                mac = str(mac_raw).upper()
+
+                            key_str = str(meta["aes"]).strip()
+                            key_bytes = key_str.encode("utf-8") if len(key_str) == 16 else bytes.fromhex(key_str)
+
+                            salt_hex = str(meta.get("adminAuthCode") or meta.get("generalAuthCode", "")).strip()
+                            salt_bytes = bytes.fromhex(salt_hex)
+
+                            temp_code = meta.get("tempAuthCode")
+                            gen_code = meta.get("generalAuthCode")
+
+                            results.append(
+                                PairingResult(
+                                    mac_address=mac,
+                                    master_key=key_bytes,
+                                    salt=salt_bytes,
+                                    name=friendly_name,
+                                    model=model,
+                                    temp_auth_code=str(temp_code).strip() if temp_code else None,
+                                    general_auth_code=str(gen_code).strip() if gen_code else None,
+                                )
+                            )
+                            continue
+
+                        # 2. Legacy / generic fallback schema
+                        dev_type = str(item.get("device_type", item.get("type", ""))).lower()
+                        desc = str(meta.get("description", "")).lower()
+                        if "lock" not in dev_type and "sitana" not in dev_type and "lock" not in desc and "lock" not in model.lower():
+                            continue
+
+                        mac_val = item.get("mac_address") or item.get("mac") or item.get("device_id")
+                        raw_key = item.get("master_key") or item.get("static_key") or item.get("key") or meta.get("key")
+                        raw_salt = item.get("salt") or item.get("lock_salt") or meta.get("salt")
+
+                        if not mac_val or not raw_key or not raw_salt:
+                            continue
+
+                        if isinstance(raw_key, str):
+                            raw_key_str = raw_key.strip()
+                            key_bytes = bytes.fromhex(raw_key_str) if len(raw_key_str) == 32 else raw_key_str.encode("utf-8")
                         else:
-                            mac = str(mac_raw).upper()
+                            key_bytes = bytes(raw_key)
 
-                        key_str = str(meta["aes"]).strip()
-                        key_bytes = key_str.encode("utf-8") if len(key_str) == 16 else bytes.fromhex(key_str)
-
-                        salt_hex = str(meta.get("adminAuthCode") or meta.get("generalAuthCode", "")).strip()
-                        salt_bytes = bytes.fromhex(salt_hex)
-
-                        temp_code = meta.get("tempAuthCode")
-                        gen_code = meta.get("generalAuthCode")
+                        if isinstance(raw_salt, str):
+                            salt_clean = raw_salt.strip().replace(" ", "").replace("0x", "")
+                            salt_bytes = bytes.fromhex(salt_clean)
+                        else:
+                            salt_bytes = bytes(raw_salt)
 
                         results.append(
                             PairingResult(
-                                mac_address=mac,
+                                mac_address=str(mac_val).upper(),
                                 master_key=key_bytes,
                                 salt=salt_bytes,
                                 name=friendly_name,
                                 model=model,
-                                temp_auth_code=str(temp_code).strip() if temp_code else None,
-                                general_auth_code=str(gen_code).strip() if gen_code else None,
                             )
                         )
-                        continue
-
-                    # 2. Legacy / generic fallback schema
-                    dev_type = item.get("device_type", item.get("type", "")).lower()
-                    desc = str(meta.get("description", "")).lower()
-                    if "lock" not in dev_type and "sitana" not in dev_type and "lock" not in desc and "lock" not in model.lower():
-                        continue
-
-                    mac_val = item.get("mac_address") or item.get("mac") or item.get("device_id")
-                    raw_key = item.get("master_key") or item.get("static_key") or item.get("key") or meta.get("key")
-                    raw_salt = item.get("salt") or item.get("lock_salt") or meta.get("salt")
-
-                    if not mac_val or not raw_key or not raw_salt:
-                        continue
-
-                    if isinstance(raw_key, str):
-                        raw_key_str = raw_key.strip()
-                        key_bytes = bytes.fromhex(raw_key_str) if len(raw_key_str) == 32 else raw_key_str.encode("utf-8")
-                    else:
-                        key_bytes = bytes(raw_key)
-
-                    if isinstance(raw_salt, str):
-                        salt_clean = raw_salt.strip().replace(" ", "").replace("0x", "")
-                        salt_bytes = bytes.fromhex(salt_clean)
-                    else:
-                        salt_bytes = bytes(raw_salt)
-
-                    results.append(
-                        PairingResult(
-                            mac_address=str(mac_val).upper(),
-                            master_key=key_bytes,
-                            salt=salt_bytes,
-                            name=friendly_name,
-                            model=model,
-                        )
-                    )
+                    except Exception as dev_err:
+                        dev_id = item.get("device_id") or item.get("id") or "unknown"
+                        _LOGGER.warning("Skipping malformed lock device record (%s): %s", dev_id, dev_err)
 
                 return results
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise AtombergConnectionError(f"Network error querying app_open: {err}") from err
         finally:
             if self._owns_session and self._session and not self._session.closed:
@@ -265,27 +287,34 @@ class AtombergCloudSync:
         clean_id = device_id.replace(":", "").replace("-", "").lower()
 
         # Step 1: Obtain anonymous Firebase token using mobile client key
-        api_key = "AIzaSyBowISrLGjKvmHN95NEvylMjgdR0ExPlUo"
-        auth_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}"
         fb_token = None
-        try:
-            async with session.post(
-                auth_url,
-                json={"returnSecureToken": True},
-                headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as auth_resp:
-                if auth_resp.status == 200:
-                    auth_data = await auth_resp.json(content_type=None)
-                    fb_token = auth_data.get("idToken")
-        except Exception as err:
-            _LOGGER.debug("Could not get Firebase token: %s", err)
+        if self._fb_token and time.time() < (self._fb_token_expires_at - 60):
+            fb_token = self._fb_token
+        else:
+            auth_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={self._firebase_api_key}"
+            try:
+                async with session.post(
+                    auth_url,
+                    json={"returnSecureToken": True},
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as auth_resp:
+                    if auth_resp.status == 200:
+                        auth_data = await auth_resp.json(content_type=None)
+                        fb_token = auth_data.get("idToken")
+                        if fb_token:
+                            self._fb_token = fb_token
+                            expires_in = float(auth_data.get("expiresIn", 3600))
+                            self._fb_token_expires_at = time.time() + expires_in
+            except Exception as err:
+                _LOGGER.debug("Could not get Firebase token: %s", err)
 
         if not fb_token:
-            fb_token = self._token
+            _LOGGER.debug("No Firebase token available; skipping cloud history query")
+            return []
 
         # Step 2: Fetch Firestore doc for this lock
-        fs_url = f"https://firestore.googleapis.com/v1/projects/firestore-test-65c75/databases/(default)/documents/lock_history/{clean_id}"
+        fs_url = f"https://firestore.googleapis.com/v1/projects/{self._firebase_project_id}/databases/(default)/documents/lock_history/{clean_id}"
         headers = {"Authorization": f"Bearer {fb_token}", "Accept": "application/json"}
 
         try:
@@ -325,30 +354,36 @@ class AtombergCloudSync:
             if event_type == "addKey" or rec_type == "8":
                 event_name = "Credential Enrolled"
 
-            cred_type_name = "Physical Credential"
-            detail = ""
-            if key_type == 1:
-                cred_type_name = "Fingerprint"
-                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
-            elif key_type == 2:
-                cred_type_name = "PIN Code"
-                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
-            elif key_type == 4:
-                cred_type_name = "NFC Card"
-                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
-            elif key_type == 128 or slot_id == 0:
-                cred_type_name = "Atomberg App"
-                detail = "Atomberg Mobile App (BLE)"
+            if event_name == "Unlocked Successfully":
+                if key_type in _CREDENTIAL_TYPE_NAMES:
+                    cred_type_name = _CREDENTIAL_TYPE_NAMES[key_type]
+                    detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
+                elif key_type == 128 or slot_id == 0:
+                    cred_type_name = "Atomberg App"
+                    detail = "Atomberg Mobile App (BLE)"
+                else:
+                    cred_type_name = f"Credential Type {key_type}" if key_type else "Physical Credential"
+                    detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
+            elif event_name == "Credential Enrolled":
+                if key_type in _CREDENTIAL_TYPE_NAMES:
+                    cred_type_name = _CREDENTIAL_TYPE_NAMES[key_type]
+                    detail = f"Enrolled - {slot_name(slot_id, slot_mappings)}"
+                else:
+                    cred_type_name = f"Credential Type {key_type}" if key_type else "Physical Credential"
+                    detail = f"Enrolled - {slot_name(slot_id, slot_mappings)}"
             else:
-                cred_type_name = f"Credential Type {key_type}"
-                detail = f"Unlocked by - {slot_name(slot_id, slot_mappings)}"
+                cred_type_name = "Hardware Status"
+                detail = "System / Diagnostic Event"
 
             events.append({
                 "datetime": format_ist_time(ts),
+                "timestamp": format_ist_time(ts),
                 "event": event_name,
                 "detail": detail,
                 "credential_type": cred_type_name,
                 "slot": slot_id,
+                "slot_id": slot_id,
+                "raw_record_type": rec_type,
                 "raw_timestamp": ts,
                 "source": "cloud",
             })
