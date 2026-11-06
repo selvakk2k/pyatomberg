@@ -42,7 +42,7 @@ Atomberg provides an official Developer Portal and API (`https://api.developer.a
 2. **Missing Local BLE Credentials**: The official cloud API does not provide Bluetooth Low Energy (BLE) authentication keys or master credentials for smart door locks.
 3. **Appliance Ecosystem Unification**: `pyatomberg` bridges the gap across the Atomberg device ecosystem, enabling third-party Home Assistant integrations and custom automation engines to interface directly with fans, locks, and appliances.
 
-To overcome these barriers, `atomberg-py` reverse-engineers the official Atomberg application protocol and combines two distinct control tiers:
+To overcome these barriers, `pyatomberg` reverse-engineers the official Atomberg application protocol and combines two distinct control tiers:
 
 * **Universal Cloud Layer**: Uses native AWS Cognito OAuth2 with PKCE (supporting Email, Google, Apple, and Facebook logins) to discover all registered appliances across any user account.
 * **100% Offline Local Layer**: Provides protocol frame serialization (`HSJProtocol`), AES-128 cryptographic primitives, live notification parsing, and local network UDP broadcast listeners for smart ceiling fans.
@@ -85,7 +85,7 @@ pip install -e ".[dev]"
 
 ## Authentication Pathways
 
-`atomberg-py` supports two authentication methods depending on your account setup:
+`pyatomberg` supports two authentication methods depending on your account setup:
 
 ### Method A: Universal Cognito OAuth2 + PKCE (Recommended)
 
@@ -152,7 +152,7 @@ asyncio.run(main())
 
 ### 2. Smart Door Locks: Key Extraction & Protocol Primitives
 
-`atomberg-py` handles the cryptographic encoding, packet serialization, and credential extraction for SL1 / SL1 Pro smart locks:
+`pyatomberg` handles the cryptographic encoding, packet serialization, and credential extraction for SL1 / SL1 Pro smart locks:
 
 ```python
 from pyatomberg.lock.pairing import extract_keys_from_btsnoop
@@ -169,10 +169,6 @@ payload = bytes.fromhex("000000000200f000000000000c")  # Probe handshake
 packet = build_hsj_packet(payload, key=keys.master_key, frame_seq=2)
 print(f"Serialized Frame (length {len(packet)}): {packet.hex()}")
 ```
-
-> [!NOTE]
-> **Live Bluetooth GATT Connectivity**:
-> To control and automate the lock over Bluetooth Low Energy, the companion Home Assistant integration [`ha-atomberg-lock`](https://github.com/selvakk2k/ha-atomberg-lock) implements the native GATT client and auto-relock lifecycle using Home Assistant's Bluetooth engine.
 
 ---
 
@@ -241,8 +237,7 @@ To set clear expectations, here are the architectural boundaries of the library:
 
 | Functionality | Supported | Architectural Reason / Detail |
 | :--- | :--- | :--- |
-| **Direct BLE Lock Control** | Integration | `atomberg-py` provides protocol packet serialization, AES-128 crypto, and key extraction. Live GATT connectivity is managed natively by [`ha-atomberg-lock`](https://github.com/selvakk2k/ha-atomberg-lock). |
-| **Offline Lock OTPs** | Yes | Calculated offline via HMAC-SHA256 and IST half-hour time quantization matching lock firmware. |
+| **Direct BLE Lock Control** | Integration | `pyatomberg` provides protocol packet serialization, AES-128 crypto, and key extraction.|
 | **Lock Remote Unlock over Wi-Fi** | No | Atomberg SL1 / SL1 Pro hardware has no onboard Wi-Fi chip. Remote access requires an active BLE proxy (e.g. ESPHome Bluetooth Proxy or local Bluetooth adapter). |
 | **Developer API without a Fan** | No | Atomberg mobile app enforces a UI restriction that hides Developer Options if no fan is enrolled. Use Cognito OAuth2 instead. |
 | **Fan Local UDP Telemetry** | Yes | Fans broadcast real-time state packets on UDP port 5625. |
