@@ -1,11 +1,14 @@
 """Atomberg smart BLDC ceiling fan device controller."""
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from pyatomberg.models.device import AtombergDeviceModel, DeviceType, FanState
 
 if TYPE_CHECKING:
     from pyatomberg.client import AtombergClient
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AtombergFan(AtombergDeviceModel):
@@ -51,8 +54,12 @@ class AtombergFan(AtombergDeviceModel):
         for cb in self._update_callbacks:
             try:
                 cb(self)
-            except Exception:
-                pass
+            except Exception as ex:
+                _LOGGER.exception(
+                    "Error executing fan state change callback for device %s: %s",
+                    self.device_id,
+                    ex,
+                )
 
     def update_from_dict(self, data: dict[str, Any]) -> None:
         """Update live state from cloud response or local UDP broadcast packet."""

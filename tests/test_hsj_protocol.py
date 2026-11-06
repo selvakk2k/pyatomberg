@@ -130,3 +130,21 @@ def test_parse_log_record():
     assert parsed["event"] == "Unlocked Successfully"
     assert "Right Thumb" in parsed["detail"]
     assert parsed["slot"] == 20
+
+
+def test_parse_log_record_tamper_pin():
+    """Verify parsing of 32-byte log record for wrong PIN attempt."""
+    rec = bytearray(32)
+    rec[0:4] = (1700000000).to_bytes(4, "big")
+    rec[4] = 0x36
+    rec[5] = 90
+    rec[7:9] = (0).to_bytes(2, "big")
+    rec[9] = 0x02
+    rec[10:12] = (0).to_bytes(2, "big")
+    rec[26] = 5
+    rec[27:32] = b"98765"
+
+    parsed = parse_log_record(bytes(rec))
+    assert parsed["event"] == "False / Denied Attempt"
+    assert parsed["credential_type"] == "Wrong Keypad PIN"
+    assert "98765" in parsed["detail"]

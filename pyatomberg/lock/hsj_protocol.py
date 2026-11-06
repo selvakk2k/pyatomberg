@@ -227,8 +227,9 @@ def parse_log_record(rec: bytes, slot_mappings: dict[int, str] | None = None) ->
         elif cred_type == 0x02:
             cred_type_name = "Wrong Keypad PIN"
             pin_len = rec[26] if len(rec) > 26 else 0
-            if 0 < pin_len <= 12 and len(rec) >= (27 + pin_len):
-                pin_str = rec[27 : 27 + pin_len].decode("latin1", errors="ignore")
+            if pin_len > 0 and len(rec) > 27:
+                available_len = min(pin_len, len(rec) - 27)
+                pin_str = rec[27 : 27 + available_len].decode("latin1", errors="ignore")
             detail = f"Wrong Keypad PIN: {pin_str}" if pin_str else "Wrong Keypad PIN"
         elif cred_type == 0x04:
             cred_type_name = "Unregistered NFC Card"

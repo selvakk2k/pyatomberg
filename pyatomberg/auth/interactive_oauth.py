@@ -66,7 +66,7 @@ async def run_interactive_login() -> tuple[dict[str, str], list[Any]]:
     refresh_token = tokens.get("refresh_token", "")
 
     print("\n[+] Authentication successful!")
-    print(f"    Refresh Token (first 20 chars): {refresh_token[:20]}...")
+    print(f"    Refresh Token:                  {refresh_token}")
     print(f"    Access Token (first 20 chars):  {access_token[:20]}...")
     print(f"    ID Token (first 20 chars):      {id_token[:20]}...")
 

@@ -39,15 +39,17 @@ class CognitoOAuthHandler:
         client_id: str = COGNITO_CLIENT_ID,
         redirect_uri: str = COGNITO_REDIRECT_URI,
         refresh_token: str | None = None,
+        access_token: str | None = None,
+        id_token: str | None = None,
         session: aiohttp.ClientSession | None = None,
     ) -> None:
         """Initialize the Cognito OAuth handler."""
         self._client_id = client_id
         self._redirect_uri = redirect_uri
         self._refresh_token = refresh_token
-        self._id_token: str | None = None
-        self._access_token: str | None = None
-        self._expires_at: float = 0.0
+        self._id_token = id_token
+        self._access_token = access_token
+        self._expires_at: float = (time.time() + 3600) if access_token else 0.0
         self._session = session
 
         # Active PKCE verifier for pending flow
@@ -140,6 +142,28 @@ class CognitoOAuthHandler:
             "refresh_token": self._refresh_token,
         }
         return await self._post_token_request(payload)
+
+    async def get_access_token(self, force_refresh: bool = False) -> str:
+        """Retrieve a valid access token, refreshing if necessary."""
+        if not force_refresh and self.is_authenticated and self._access_token:
+            return self._access_token
+
+        if not self._refresh_token:
+            raise AtombergAuthError("Cognito authentication expired and no refresh token available")
+
+        await self.refresh_tokens()
+        if not self._access_token:
+            raise AtombergAuthError("Cognito refresh did not return a valid access token")
+        return self._access_token
+
+    async def get_auth_headers(self) -> dict[str, str]:
+        """Return HTTP authorization headers with a valid Bearer token."""
+        token = await self.get_access_token()
+        auth_token = self._id_token or token
+        return {
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+        }
 
     async def _post_token_request(self, payload: dict[str, str]) -> dict[str, Any]:
         """Post request to Cognito token endpoint."""

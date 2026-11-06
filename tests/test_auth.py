@@ -58,3 +58,20 @@ def test_cognito_universal_authorization_url():
     assert "scope=aws.cognito.signin.user.admin+openid+email" in url
     assert f"state={state}" in url
     assert len(verifier) >= 43
+
+
+@pytest.mark.asyncio
+async def test_cognito_auth_headers_with_cached_token():
+    """Verify CognitoOAuthHandler returns proper auth headers when token is cached."""
+    handler = CognitoOAuthHandler(
+        client_id="test_client",
+        access_token="test_access_token_123",
+        id_token="test_id_token_456",
+    )
+    assert handler.is_authenticated is True
+    token = await handler.get_access_token()
+    assert token == "test_access_token_123"
+
+    headers = await handler.get_auth_headers()
+    assert headers["Authorization"] == "Bearer test_id_token_456"
+    assert headers["Content-Type"] == "application/json"

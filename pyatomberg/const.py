@@ -14,6 +14,10 @@ COGNITO_REDIRECT_URI: Final[str] = "https://app.atomberg-iot.com"
 SERVER_API_BASE: Final[str] = "https://server.atomberg-iot.com"
 DEVELOPER_API_BASE: Final[str] = "https://api.developer.atomberg-iot.com/v2"
 
+# Firebase Firestore Cloud History
+FIREBASE_API_KEY: Final[str] = "AIzaSyBowISrLGjKvmHN95NEvylMjgdR0ExPlUo"
+FIREBASE_PROJECT_ID: Final[str] = "firestore-test-65c75"
+
 # Fan Local Subnet UDP Port
 FAN_UDP_PORT: Final[int] = 5625
 FAN_UDP_MAGIC_PREFIX: Final[bytes] = b"PROXY TCP4 "
