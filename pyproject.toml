@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyatomberg"
-version = "0.2.0"
+version = "0.2.1"
 description = "Python library for Atomberg smart home authentication, device discovery, and offline protocol codecs"
 readme = "README.md"
 requires-python = ">=3.11"
