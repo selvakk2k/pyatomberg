@@ -38,7 +38,7 @@ An asynchronous Python client library for authentication, discovery, and control
 
 Atomberg provides an official Developer Portal and API (`https://api.developer.atomberg-iot.com`). However, relying exclusively on this official API presents several practical constraints:
 
-1. **Mandatory Ceiling Fan Dependency**: In the official Atomberg Android/iOS application (`com.atomberg.app`), the Developer Options menu (`DeveloperOptionsScreen`) is strictly hidden unless the user has at least one smart ceiling fan registered to their account. Users who own only smart locks or smart appliances cannot activate developer mode or generate developer tokens.
+1. **Mandatory Ceiling Fan Dependency**: In the official Atomberg Android/iOS application (`com.atomberg.app`), the Developer Options menu (`DeveloperOptionsScreen`) is not accessible unless the user has at least one smart ceiling fan registered to their account. Users who own only smart locks or smart appliances cannot activate developer mode or generate developer tokens.
 2. **Missing Local BLE Credentials**: The official cloud API does not provide Bluetooth Low Energy (BLE) authentication keys or master credentials for smart door locks.
 3. **Appliance Ecosystem Unification**: `pyatomberg` bridges the gap across the Atomberg device ecosystem, enabling third-party Home Assistant integrations and custom automation engines to interface directly with fans, locks, and appliances.
 
