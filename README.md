@@ -1,9 +1,12 @@
 # Atomberg Devices Python Library (`pyatomberg`)
 
-[![Hardware Verified](https://img.shields.io/badge/Hardware-Verified%20(SL1%20Pro)-success.svg)](#hardware-compatibility-matrix)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/pyatomberg.svg)](https://pypi.org/project/pyatomberg/)
-[![AI-Assisted](https://img.shields.io/badge/AI%20Assisted-Antigravity%20%7C%20Claude-blueviolet?style=flat-square&logo=google)](https://github.com/selvakk2k)
+<p align="center">
+  <a href="https://pypi.org/project/pyatomberg/"><img src="https://img.shields.io/pypi/v/pyatomberg?style=flat-square" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/pyatomberg/"><img src="https://img.shields.io/pypi/pyversions/pyatomberg?style=flat-square" alt="Python Version"></a>
+  <a href="https://github.com/selvakk2k/pyatomberg/releases"><img src="https://img.shields.io/github/v/release/selvakk2k/pyatomberg?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/selvakk2k"><img src="https://img.shields.io/badge/AI%20Assisted-Antigravity%20%7C%20Claude%20%7C%20CodeRabbit-blueviolet?style=flat-square" alt="AI-Assisted"></a>
+  <a href="https://aiattribution.github.io/interpret-attribution"><img src="https://img.shields.io/badge/AI%20Attribution-AIA%20PAI%20Nc%20Hin-orange?style=flat-square" alt="AI Attribution"></a>
+</p>
 
 An asynchronous Python client library for authentication, discovery, and control of **Atomberg smart home appliances** (smart door locks, smart ceiling fans, and connected appliances).
 
